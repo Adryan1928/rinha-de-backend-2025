@@ -41,6 +41,12 @@ async def payments_summary(from_date: Optional[str] = Query(None, alias="from"),
             payments_summary_service(is_default=False, from_date=from_date, to_date=to_date)
         )
 
+        default_summary = default_summary.model_dump()
+        fallback_summary = fallback_summary.model_dump()
+
+        default_summary["totalAmount"] = round(default_summary["totalAmount"], 2)
+        fallback_summary["totalAmount"] = round(fallback_summary["totalAmount"], 2)
+
         return {
             "default": ProcessorSummarySchema.model_validate(default_summary),
             "fallback": ProcessorSummarySchema.model_validate(fallback_summary)

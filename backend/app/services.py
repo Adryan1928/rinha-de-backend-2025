@@ -23,12 +23,46 @@ async def enqueue_payment(payload: PaymentSchema, is_default: bool = True):
         "requestedAt": datetime.now(tz=timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         "is_default": is_default
     }
-    # Adiciona na fila
     await redis_client.rpush(QUEUE_KEY, json.dumps(data))
 
+async def choose_processor():
+    default, fallback = await asyncio.gather(redis_client.hgetall(f"{HEALTH_KEY}:default"),
+    redis_client.hgetall(f"{HEALTH_KEY}:fallback"))
+
+    def parse(info):
+        return {
+            "failing": info.get("failing") == "true",
+            "minResponseTime": int(info.get("minResponseTime", "9999"))
+        }
+
+    default = parse(default)
+    fallback = parse(fallback)
+
+    candidates = []
+    if not default["failing"]:
+        candidates.append(("default", PROCESSOR_DEFAULT_URL, default["minResponseTime"]))
+    if not fallback["failing"]:
+        candidates.append(("fallback", PROCESSOR_FALLBACK_URL, fallback["minResponseTime"]))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: x[2])
+    return candidates
+
+
 async def process_payment_with_fallback(payload: dict):
-    # Tenta default
     try:
+        chosen = await choose_processor()
+        if not chosen and not chosen[0]:
+            return False
+    except Exception as e:
+        return False
+
+    
+    try:
+        name, url, _ = chosen[0]
+
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(PROCESSOR_DEFAULT_URL + "/payments", json=payload)
             if 200 <= resp.status_code < 300:
@@ -37,7 +71,8 @@ async def process_payment_with_fallback(payload: dict):
             else:
                 raise Exception("Default processor falhou")
     except Exception:
-        # Tenta fallback
+        if not chosen[2]:
+            return False
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.post(PROCESSOR_FALLBACK_URL + "/payments", json=payload)
@@ -76,34 +111,10 @@ async def save_payment(data: dict, is_default: bool):
         redis_client.zadd(f"payments:{key}", {correlation_id: int(dt.timestamp())})
     )
 
-# async def call_processor(base_url: str, payload: PaymentSchema, background_tasks: BackgroundTasks, is_default: bool = True) -> Dict[str, Any]:
-#     url = f"{base_url}/payments"
-#     requestedAt = datetime.now(tz=timezone.utc).isoformat(timespec="milliseconds")
-
-#     data = {
-#         **payload.model_dump(mode="json"),
-#         "requestedAt": requestedAt.replace("+00:00", "Z")
-#     }
-
-#     async with httpx.AsyncClient(timeout=15.0) as client:
-#         resp = await client.post(url, json=data)
-#         content_type = resp.headers.get("content-type", "")
-#         body = (
-#             (await resp.aread()).decode("utf-8", errors="replace")
-#             if "application/json" not in content_type.lower()
-#             else resp.json()
-#         )
-        
-
-#     background_tasks.add_task(save_payment, data, is_default)
-
-#     return {"url": url, "status_code": resp.status_code, "body": body}
-
 async def get_payments_by_period(processor: str, from_date: Optional[str] = None, to_date: Optional[str] = None) -> List[Dict]:
 
     zset_key = f"payments:{processor}"
 
-    # Se não for passado, usa -inf / +inf
     if from_date:
         start = int(datetime.fromisoformat(from_date.replace("Z", "+00:00")).timestamp())
     else:
@@ -120,7 +131,6 @@ async def get_payments_by_period(processor: str, from_date: Optional[str] = None
         *[redis_client.hgetall(f"payment:{pid}") for pid in ids]
     )
 
-    # Converte bytes → str
     payments = [
         {k: v for k, v in p.items()}
         for p in payments
@@ -153,6 +163,30 @@ async def payments_summary_service(is_default=True, from_date: Optional[str] = N
         return summary
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Falha ao obter summary: {e}")
+    
+
+HEALTH_KEY = "processors_health"
+
+async def update_processor_health():
+    while True:
+        for name, url in [("default", PROCESSOR_DEFAULT_URL), ("fallback", PROCESSOR_FALLBACK_URL)]:
+            try:
+                health = await call_processor_health(url)
+                if health["status_code"] == 200 and not health["body"].get("failing", True):
+                    status = {
+                        "failing": "false",
+                        "minResponseTime": str(health["body"].get("minResponseTime", 9999))
+                    }
+                else:
+                    status = {"failing": "true", "minResponseTime": "9999"}
+            except Exception:
+                status = {"failing": "true", "minResponseTime": "9999"}
+
+            # salva cada processor como um hash dentro da chave principal
+            await redis_client.hset(f"{HEALTH_KEY}:{name}", mapping=status)
+
+        await asyncio.sleep(5)
+
 
 async def call_processor_health(base_url: str) -> Dict[str, Any]:
     url = f"{base_url}/payments/service-health"
