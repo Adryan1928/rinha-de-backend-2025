@@ -1,10 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from schemas import PaymentSchema, ProcessorSummarySchema
 import os
 import asyncio
-from services import call_processor, call_processor_health, call_processor_summary, purge_payments
-from database import redis_client
+from services import call_processor, call_processor_health, call_processor_summary, purge_payments, payments_summary_service
 import json
+from typing import Optional
 
 PROCESSOR_DEFAULT_URL = os.getenv("PROCESSOR_DEFAULT_URL", "http://localhost:8001")
 PROCESSOR_FALLBACK_URL = os.getenv("PROCESSOR_FALLBACK_URL", "http://localhost:8002")
@@ -40,12 +40,20 @@ async def create_payment(payment: PaymentSchema):
         return {"message": "Fallback acionado", "response": fallback_result}
 
 @router.get("/payments-summary")
-async def payments_summary():
+async def payments_summary(from_date: Optional[str] = Query(None, alias="from"), to_date: Optional[str] = Query(None, alias="to")):
     try:
-        default_summary = redis_client.get("default")
-        fallback_summary = redis_client.get("fallback")
-        default_summary = json.loads(default_summary) if default_summary else ProcessorSummarySchema()
-        fallback_summary = json.loads(fallback_summary) if fallback_summary else ProcessorSummarySchema()
+        if from_date and to_date:
+
+            default_summary, fallback_summary = await asyncio.gather(
+                payments_summary_service(is_default=True, from_date=from_date, to_date=to_date),
+                payments_summary_service(is_default=False, from_date=from_date, to_date=to_date)
+            )
+        else:
+            default_summary, fallback_summary = await asyncio.gather(
+                payments_summary_service(is_default=True),
+                payments_summary_service(is_default=False)
+            )
+
         return {
             "default": ProcessorSummarySchema.model_validate(default_summary),
             "fallback": ProcessorSummarySchema.model_validate(fallback_summary)
