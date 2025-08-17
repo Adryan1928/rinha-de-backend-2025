@@ -85,7 +85,7 @@ async def process_payment_with_fallback(payload: dict):
 
 async def worker():
     while True:
-        item = await redis_client.blpop(QUEUE_KEY, timeout=5)
+        item = await redis_client.blpop(QUEUE_KEY, timeout=0.1)
         if item:
             _, payload_json = item
             payload = json.loads(payload_json)
