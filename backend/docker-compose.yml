@@ -6,6 +6,12 @@ services:
       - "6379:6379"
     networks:
       - backend
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 80MB
 
   backend1:
     build: .
@@ -23,6 +29,12 @@ services:
     networks:
       - backend
       - payment-processor
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 80MB
 
   backend2:
     build: .
@@ -40,6 +52,12 @@ services:
       - backend
       - payment-processor
 
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 80MB
+
   nginx:
     image: nginx:stable
     container_name: nginx-loadbalancer
@@ -52,6 +70,12 @@ services:
       - backend2
     networks:
       - backend
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 90MB
 
 networks:
   backend:

@@ -5,7 +5,7 @@ from services import worker
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    for _ in range(5):
+    for _ in range(2):
         asyncio.create_task(worker())
     yield
 
