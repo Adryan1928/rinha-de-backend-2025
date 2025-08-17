@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 from schemas import PaymentSchema, ProcessorSummarySchema
 import os
 import asyncio
-from services import call_processor, call_processor_health, call_processor_summary, purge_payments, payments_summary_service
+from services import call_processor_health, call_processor_summary, purge_payments, payments_summary_service, enqueue_payment
 from typing import Optional
 
 PROCESSOR_DEFAULT_URL = os.getenv("PROCESSOR_DEFAULT_URL", "http://localhost:8001")
@@ -27,16 +27,10 @@ MESSAGE = [
 router = APIRouter(prefix="")
 
 @router.post("/payments")
-async def create_payment(payment: PaymentSchema, background_tasks: BackgroundTasks):
-    try:
-        result = await call_processor(PROCESSOR_DEFAULT_URL, payment, background_tasks)
-        if str(result["status_code"])[0] != "2":
-            raise Exception("Default processor falhou")
-        
-        return {"message": "Pagamento processado com sucesso!", "response": result}
-    except Exception:
-        fallback_result = await call_processor(PROCESSOR_FALLBACK_URL, payment, background_tasks, is_default=False)
-        return {"message": "Fallback acionado", "response": fallback_result}
+async def create_payment(payment: PaymentSchema):
+    await enqueue_payment(payment)
+    return {"message": "Pagamento recebido e será processado em breve."}
+
 
 @router.get("/payments-summary")
 async def payments_summary(from_date: Optional[str] = Query(None, alias="from"), to_date: Optional[str] = Query(None, alias="to")):

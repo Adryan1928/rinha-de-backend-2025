@@ -11,7 +11,54 @@ from datetime import datetime
 import uuid
 import asyncio
 
+PROCESSOR_DEFAULT_URL = os.getenv("PROCESSOR_DEFAULT_URL", "http://localhost:8001")
+PROCESSOR_FALLBACK_URL = os.getenv("PROCESSOR_FALLBACK_URL", "http://localhost:8002")
 PROCESSOR_TOKEN = os.getenv("PROCESSOR_TOKEN", "123")
+
+QUEUE_KEY = "payments_queue"
+
+async def enqueue_payment(payload: PaymentSchema, is_default: bool = True):
+    data = {
+        **payload.model_dump(mode="json"),
+        "requestedAt": datetime.now(tz=timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        "is_default": is_default
+    }
+    # Adiciona na fila
+    await redis_client.rpush(QUEUE_KEY, json.dumps(data))
+
+async def process_payment_with_fallback(payload: dict):
+    # Tenta default
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(PROCESSOR_DEFAULT_URL + "/payments", json=payload)
+            if 200 <= resp.status_code < 300:
+                await save_payment(payload, is_default=True)
+                return True
+            else:
+                raise Exception("Default processor falhou")
+    except Exception:
+        # Tenta fallback
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(PROCESSOR_FALLBACK_URL + "/payments", json=payload)
+                if 200 <= resp.status_code < 300:
+                    await save_payment(payload, is_default=False)
+                    return True
+        except Exception as e:
+            print(f"Falha total no pagamento: {e}")
+    return False
+
+async def worker():
+    while True:
+        item = await redis_client.blpop(QUEUE_KEY, timeout=5)
+        if item:
+            _, payload_json = item
+            payload = json.loads(payload_json)
+            await process_payment_with_fallback(payload)
+        else:
+            await asyncio.sleep(0.1)
+
+
 
 async def save_payment(data: dict, is_default: bool):
     key = "default" if is_default else "fallback"
@@ -29,28 +76,28 @@ async def save_payment(data: dict, is_default: bool):
         redis_client.zadd(f"payments:{key}", {correlation_id: int(dt.timestamp())})
     )
 
-async def call_processor(base_url: str, payload: PaymentSchema, background_tasks: BackgroundTasks, is_default: bool = True) -> Dict[str, Any]:
-    url = f"{base_url}/payments"
-    requestedAt = datetime.now(tz=timezone.utc).isoformat(timespec="milliseconds")
+# async def call_processor(base_url: str, payload: PaymentSchema, background_tasks: BackgroundTasks, is_default: bool = True) -> Dict[str, Any]:
+#     url = f"{base_url}/payments"
+#     requestedAt = datetime.now(tz=timezone.utc).isoformat(timespec="milliseconds")
 
-    data = {
-        **payload.model_dump(mode="json"),
-        "requestedAt": requestedAt.replace("+00:00", "Z")
-    }
+#     data = {
+#         **payload.model_dump(mode="json"),
+#         "requestedAt": requestedAt.replace("+00:00", "Z")
+#     }
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(url, json=data)
-        content_type = resp.headers.get("content-type", "")
-        body = (
-            (await resp.aread()).decode("utf-8", errors="replace")
-            if "application/json" not in content_type.lower()
-            else resp.json()
-        )
+#     async with httpx.AsyncClient(timeout=15.0) as client:
+#         resp = await client.post(url, json=data)
+#         content_type = resp.headers.get("content-type", "")
+#         body = (
+#             (await resp.aread()).decode("utf-8", errors="replace")
+#             if "application/json" not in content_type.lower()
+#             else resp.json()
+#         )
         
 
-    background_tasks.add_task(save_payment, data, is_default)
+#     background_tasks.add_task(save_payment, data, is_default)
 
-    return {"url": url, "status_code": resp.status_code, "body": body}
+#     return {"url": url, "status_code": resp.status_code, "body": body}
 
 async def get_payments_by_period(processor: str, from_date: Optional[str] = None, to_date: Optional[str] = None) -> List[Dict]:
 
