@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timezone
 from database import redis_client
 from fastapi import HTTPException
+import json
 
 PROCESSOR_TOKEN = os.getenv("PROCESSOR_TOKEN", "123")
 
@@ -28,21 +29,28 @@ async def call_processor(base_url: str, payload: PaymentSchema, is_default: bool
         if (resp.status_code == 200):
             fallback = {}
             default = {}
-            if (is_default):
-                default = await redis_client.get("default")
-                default = ProcessorSummarySchema.model_validate(default)
-                default.totalRequests += 1
-                default.totalAmount += data["amount"]
-                await redis_client.set("default", default.model_dump(mode="json"))
+            if is_default:
+                default = redis_client.get("default")
+                if default:
+                    default = json.loads(default)
+                else:
+                    default = ProcessorSummarySchema(totalRequests=0, totalAmount=0).model_dump()
 
+                default["totalRequests"] += 1
+                default["totalAmount"] += data["amount"]
+
+                redis_client.set("default", json.dumps(default))
             else:
-                fallback = await redis_client.get("fallback")
-                fallback = ProcessorSummarySchema.model_validate(fallback)
-                fallback.totalRequests += 1
-                fallback.totalAmount += data["amount"]
-                await redis_client.set("fallback", fallback.model_dump(mode="json"))
+                fallback = redis_client.get("fallback")
+                if fallback:
+                    fallback = json.loads(fallback)
+                else:
+                    fallback = ProcessorSummarySchema(totalRequests=0, totalAmount=0).model_dump()
 
-            await redis_client.set(f"payment:{data['correlationId']}", body)
+                fallback["totalRequests"] += 1
+                fallback["totalAmount"] += data["amount"]
+
+                redis_client.set("fallback", json.dumps(fallback))
         return {"url": url, "status_code": resp.status_code, "body": body}
 
 async def call_processor_health(base_url: str) -> Dict[str, Any]:
@@ -78,8 +86,8 @@ async def call_processor_summary(base_url: str) -> Dict[str, Any]:
 async def purge_payments(base_url):
 
     try:
-        await redis_client.delete("default")
-        await redis_client.delete("fallback")
+        redis_client.delete("default")
+        redis_client.delete("fallback")
         url = f"{base_url}/admin/purge-payments"
         headers = {
             "X-Rinha-Token": f"{PROCESSOR_TOKEN}"
@@ -97,4 +105,4 @@ async def purge_payments(base_url):
             return {"url": url, "status_code": resp.status_code, "body": body}
 
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Falha ao purgar pagamentos: {e}")
+        raise HTTPException(status_code=500, detail=f"Falha ao purgar pagamentos: {e}")

@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 
 export GIT_EDITOR=true
+export K6_WEB_DASHBOARD=true
+export K6_WEB_DASHBOARD_PORT=5665
+export K6_WEB_DASHBOARD_PERIOD=2s
+export K6_WEB_DASHBOARD_OPEN=true
+export K6_WEB_DASHBOARD_EXPORT='report.html'
 
 startContainers() {
     pushd ../payment-processor > /dev/null

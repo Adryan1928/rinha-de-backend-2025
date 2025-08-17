@@ -4,6 +4,7 @@ import os
 import asyncio
 from services import call_processor, call_processor_health, call_processor_summary, purge_payments
 from database import redis_client
+import json
 
 PROCESSOR_DEFAULT_URL = os.getenv("PROCESSOR_DEFAULT_URL", "http://localhost:8001")
 PROCESSOR_FALLBACK_URL = os.getenv("PROCESSOR_FALLBACK_URL", "http://localhost:8002")
@@ -41,8 +42,10 @@ async def create_payment(payment: PaymentSchema):
 @router.get("/payments-summary")
 async def payments_summary():
     try:
-        default_summary = await redis_client.get("default")
-        fallback_summary = await redis_client.get("fallback")
+        default_summary = redis_client.get("default")
+        fallback_summary = redis_client.get("fallback")
+        default_summary = json.loads(default_summary) if default_summary else ProcessorSummarySchema()
+        fallback_summary = json.loads(fallback_summary) if fallback_summary else ProcessorSummarySchema()
         return {
             "default": ProcessorSummarySchema.model_validate(default_summary),
             "fallback": ProcessorSummarySchema.model_validate(fallback_summary)

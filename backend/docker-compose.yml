@@ -2,7 +2,6 @@ services:
   redis:
     image: redis:7
     container_name: rinha-redis
-    restart: always
     ports:
       - "6379:6379"
     networks:
@@ -14,7 +13,7 @@ services:
     depends_on:
       - redis
     environment:
-      REDIS_URL: ${REDIS_URL}
+      REDIS_HOST: ${REDIS_HOST}
       PROCESSOR_DEFAULT_URL: http://payment-processor-default:8080
       PROCESSOR_FALLBACK_URL: http://payment-processor-fallback:8080
     
@@ -31,7 +30,7 @@ services:
     depends_on:
       - redis
     environment:
-        REDIS_URL: ${REDIS_URL}
+        REDIS_HOST: ${REDIS_HOST}
         PROCESSOR_DEFAULT_URL: http://payment-processor-default:8080
         PROCESSOR_FALLBACK_URL: http://payment-processor-fallback:8080
 
