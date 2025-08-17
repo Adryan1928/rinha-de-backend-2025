@@ -4,14 +4,32 @@ import httpx
 import os
 from datetime import datetime, timezone
 from database import redis_client
-from fastapi import HTTPException
+from fastapi import HTTPException, BackgroundTasks
 import json
 from typing import Optional, List, Dict
 from datetime import datetime
+import uuid
+import asyncio
 
 PROCESSOR_TOKEN = os.getenv("PROCESSOR_TOKEN", "123")
 
-async def call_processor(base_url: str, payload: PaymentSchema, is_default: bool = True) -> Dict[str, Any]:
+async def save_payment(data: dict, is_default: bool):
+    key = "default" if is_default else "fallback"
+    correlation_id = data.get("correlationId") or str(uuid.uuid4())
+    amount = float(data.get("amount", 0))
+
+    dt = datetime.fromisoformat(data["requestedAt"].replace("Z","+00:00"))
+
+    await asyncio.gather(
+        redis_client.hset(f"payment:{correlation_id}", mapping={
+            "amount": str(amount),
+            "processor": key,
+            "requestedAt": data["requestedAt"]
+        }),
+        redis_client.zadd(f"payments:{key}", {correlation_id: int(dt.timestamp())})
+    )
+
+async def call_processor(base_url: str, payload: PaymentSchema, background_tasks: BackgroundTasks, is_default: bool = True) -> Dict[str, Any]:
     url = f"{base_url}/payments"
     requestedAt = datetime.now(tz=timezone.utc).isoformat(timespec="milliseconds")
 
@@ -28,36 +46,11 @@ async def call_processor(base_url: str, payload: PaymentSchema, is_default: bool
             if "application/json" not in content_type.lower()
             else resp.json()
         )
-
-        if (resp.status_code == 200):
-            key = "default" if is_default else "fallback"
         
-            summary = await redis_client.get(key)
-            if summary:
-                summary = json.loads(summary)
-            else:
-                summary = ProcessorSummarySchema(totalRequests=0, totalAmount=0).model_dump()
 
-            summary["totalRequests"] += 1
-            summary["totalAmount"] += data["amount"]
+    background_tasks.add_task(save_payment, data, is_default)
 
-            await redis_client.set(key, json.dumps(summary))
-
-            await redis_client.hset(
-                f"payment:{data['correlationId']}",
-                mapping={
-                    "amount": str(data["amount"]),
-                    "processor": key,
-                    "requestedAt": requestedAt
-                }
-            )
-            dt = datetime.fromisoformat(requestedAt)
-            score = int(dt.timestamp())
-            zset_key = f"payments:{key}"
-            await redis_client.zadd(zset_key, {data['correlationId']: score})
-
-
-        return {"url": url, "status_code": resp.status_code, "body": body}
+    return {"url": url, "status_code": resp.status_code, "body": body}
 
 async def get_payments_by_period(processor: str, from_date: Optional[str] = None, to_date: Optional[str] = None) -> List[Dict]:
 
@@ -76,7 +69,9 @@ async def get_payments_by_period(processor: str, from_date: Optional[str] = None
 
     ids = await redis_client.zrangebyscore(zset_key, start, end)
 
-    payments = [await redis_client.hgetall(f"payment:{pid}") for pid in ids]
+    payments = await asyncio.gather(
+        *[redis_client.hgetall(f"payment:{pid}") for pid in ids]
+    )
 
     # Converte bytes → str
     payments = [
@@ -97,21 +92,15 @@ async def payments_summary_service(is_default=True, from_date: Optional[str] = N
             key = "fallback"
 
 
-        if (from_date and to_date):
-            payments = await get_payments_by_period(key, from_date, to_date)
+        payments = await get_payments_by_period(key, from_date, to_date)
 
-            total_requests = len(payments)
-            print(payments)
-            total_amount = sum(float(p.get("amount", 0)) for p in payments)
+        total_requests = len(payments)
+        total_amount = sum(float(p.get("amount", 0)) for p in payments)
 
-            summary = ProcessorSummarySchema(
-                totalRequests=total_requests,
-                totalAmount=total_amount
-            )
-            
-        else:
-            summary = await redis_client.get(key)
-            summary = json.loads(summary) if summary else ProcessorSummarySchema()
+        summary = ProcessorSummarySchema(
+            totalRequests=total_requests,
+            totalAmount=total_amount
+        )
 
 
         return summary

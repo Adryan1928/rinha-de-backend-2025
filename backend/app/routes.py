@@ -1,9 +1,8 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 from schemas import PaymentSchema, ProcessorSummarySchema
 import os
 import asyncio
 from services import call_processor, call_processor_health, call_processor_summary, purge_payments, payments_summary_service
-import json
 from typing import Optional
 
 PROCESSOR_DEFAULT_URL = os.getenv("PROCESSOR_DEFAULT_URL", "http://localhost:8001")
@@ -28,31 +27,25 @@ MESSAGE = [
 router = APIRouter(prefix="")
 
 @router.post("/payments")
-async def create_payment(payment: PaymentSchema):
+async def create_payment(payment: PaymentSchema, background_tasks: BackgroundTasks):
     try:
-        result = await call_processor(PROCESSOR_DEFAULT_URL, payment)
-        if result["status_code"] != 200:
+        result = await call_processor(PROCESSOR_DEFAULT_URL, payment, background_tasks)
+        if str(result["status_code"])[0] != "2":
             raise Exception("Default processor falhou")
         
         return {"message": "Pagamento processado com sucesso!", "response": result}
     except Exception:
-        fallback_result = await call_processor(PROCESSOR_FALLBACK_URL, payment, is_default=False)
+        fallback_result = await call_processor(PROCESSOR_FALLBACK_URL, payment, background_tasks, is_default=False)
         return {"message": "Fallback acionado", "response": fallback_result}
 
 @router.get("/payments-summary")
 async def payments_summary(from_date: Optional[str] = Query(None, alias="from"), to_date: Optional[str] = Query(None, alias="to")):
     try:
-        if from_date and to_date:
 
-            default_summary, fallback_summary = await asyncio.gather(
-                payments_summary_service(is_default=True, from_date=from_date, to_date=to_date),
-                payments_summary_service(is_default=False, from_date=from_date, to_date=to_date)
-            )
-        else:
-            default_summary, fallback_summary = await asyncio.gather(
-                payments_summary_service(is_default=True),
-                payments_summary_service(is_default=False)
-            )
+        default_summary, fallback_summary = await asyncio.gather(
+            payments_summary_service(is_default=True, from_date=from_date, to_date=to_date),
+            payments_summary_service(is_default=False, from_date=from_date, to_date=to_date)
+        )
 
         return {
             "default": ProcessorSummarySchema.model_validate(default_summary),
