@@ -38,7 +38,7 @@ async def call_processor(base_url: str, payload: PaymentSchema, background_tasks
         "requestedAt": requestedAt.replace("+00:00", "Z")
     }
 
-    async with httpx.AsyncClient(timeout=5.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.post(url, json=data)
         content_type = resp.headers.get("content-type", "")
         body = (
