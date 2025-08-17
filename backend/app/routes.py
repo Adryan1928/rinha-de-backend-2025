@@ -5,8 +5,8 @@ import asyncio
 from services import call_processor_health, call_processor_summary, purge_payments, payments_summary_service, enqueue_payment
 from typing import Optional
 
-PROCESSOR_DEFAULT_URL = os.getenv("PROCESSOR_DEFAULT_URL", "http://localhost:8001")
-PROCESSOR_FALLBACK_URL = os.getenv("PROCESSOR_FALLBACK_URL", "http://localhost:8002")
+PROCESSOR_DEFAULT_URL = os.getenv("PROCESSOR_DEFAULT_URL", "http://payment-processor-default:8080")
+PROCESSOR_FALLBACK_URL = os.getenv("PROCESSOR_FALLBACK_URL", "http://payment-processor-fallback:8080")
 PROCESSOR_TOKEN = os.getenv("PROCESSOR_TOKEN", "123")
 
 MESSAGE = [
