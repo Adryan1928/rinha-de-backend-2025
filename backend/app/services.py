@@ -11,8 +11,8 @@ from datetime import datetime
 import uuid
 import asyncio
 
-PROCESSOR_DEFAULT_URL = os.getenv("PROCESSOR_DEFAULT_URL", "http://localhost:8001")
-PROCESSOR_FALLBACK_URL = os.getenv("PROCESSOR_FALLBACK_URL", "http://localhost:8002")
+PROCESSOR_DEFAULT_URL = os.getenv("PROCESSOR_DEFAULT_URL", "http://payment-processor-default:8080")
+PROCESSOR_FALLBACK_URL = os.getenv("PROCESSOR_FALLBACK_URL", "http://payment-processor-fallback:8080")
 PROCESSOR_TOKEN = os.getenv("PROCESSOR_TOKEN", "123")
 
 QUEUE_KEY = "payments_queue"
